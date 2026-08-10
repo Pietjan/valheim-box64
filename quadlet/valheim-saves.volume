@@ -1,0 +1,10 @@
+# Named volume for the Valheim world saves.
+#
+# Podman chowns the volume to the container's user on first use, so uid 10001
+# ends up owning it without an init container.
+
+[Unit]
+Description=Valheim save directory
+
+[Volume]
+VolumeName=valheim-saves

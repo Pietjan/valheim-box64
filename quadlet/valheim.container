@@ -1,0 +1,55 @@
+# Valheim dedicated server (arm64 via box64).
+#
+# Rootless: install to ~/.config/containers/systemd/valheim.container
+# Rootful:  install to /etc/containers/systemd/valheim.container
+#
+# After installing or editing:  systemctl --user daemon-reload && systemctl --user start valheim
+
+[Unit]
+Description=Valheim dedicated server (arm64/box64)
+Wants=network-online.target
+After=network-online.target
+
+[Container]
+ContainerName=valheim
+# For a locally built image use localhost/valheim-box64:latest and AutoUpdate=local.
+Image=ghcr.io/pietjan/valheim-box64:latest
+AutoUpdate=registry
+
+PublishPort=2456:2456/udp
+PublishPort=2457:2457/udp
+
+# :Z relabels for SELinux, which is enforcing by default on Oracle Linux.
+Volume=valheim-saves.volume:/srv/valheim/saves:Z
+
+# Server name, world and password live here so this unit carries no secrets.
+# Rootful installs: use /etc/valheim/valheim.env instead of %h.
+EnvironmentFile=%h/.config/valheim/valheim.env
+
+# box64 tuning. If the server crashes shortly after a client connects, work down
+# the ladder in the README starting with BOX64_DYNAREC_BIGBLOCK=0.
+Environment=BOX64_DYNAREC_STRONGMEM=2
+Environment=BOX64_DYNAREC_BIGBLOCK=1
+Environment=BOX64_DYNAREC_SAFEFLAGS=1
+
+# The $VALHEIM_* references are expanded by the container entrypoint from the
+# EnvironmentFile above, not by systemd.
+#
+# -crossplay brings in PlayFab networking on top of Steam. It is the first thing
+# to drop if the server is unstable, since it is more emulated code paths.
+Exec=-nographics -batchmode -name $VALHEIM_NAME -port 2456 -world $VALHEIM_WORLD -password $VALHEIM_PASSWORD -public 1 -savedir /srv/valheim/saves -crossplay
+
+# Emulated, so give it room, but leave headroom for the host. Sized for a 10 GB
+# instance; raise it if your shape has more.
+PodmanArgs=--memory=6g
+
+[Service]
+Restart=always
+RestartSec=30
+# First boot is genuinely slow: Mono JITs the whole server through box64's
+# recompiler. The systemd default would kill it long before it finishes.
+TimeoutStartSec=900
+TimeoutStopSec=120
+
+[Install]
+WantedBy=default.target

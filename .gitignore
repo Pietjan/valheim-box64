@@ -1,0 +1,5 @@
+# local build/run logs
+*.log
+
+# save backups produced by `make saves/backup`
+valheim-saves-*.tar.gz

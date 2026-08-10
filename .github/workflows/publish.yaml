@@ -1,0 +1,119 @@
+name: publish
+
+# Builds natively on a GitHub-hosted arm64 runner (4 vCPU on public repos, free)
+# and pushes to GHCR. The nightly run only rebuilds when Iron Gate has published a
+# new Valheim server build, so a quiet week costs one cheap Steam query per day.
+
+on:
+  schedule:
+    - cron: "15 1 * * *"
+  workflow_dispatch:
+    inputs:
+      force:
+        description: Rebuild even if this Valheim build is already published
+        type: boolean
+        default: false
+  push:
+    branches: [main]
+    paths:
+      - Dockerfile
+      - entrypoint.sh
+      - .github/scripts/**
+      - .github/workflows/publish.yaml
+
+env:
+  # GHCR rejects uppercase image names, and the owner is "Pietjan".
+  IMAGE: ghcr.io/pietjan/valheim-box64
+
+jobs:
+  resolve:
+    name: resolve valheim build id
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    outputs:
+      build_id: ${{ steps.steam.outputs.build_id }}
+      should_build: ${{ steps.decide.outputs.should_build }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install "steam[client]"
+
+      - id: steam
+        run: |
+          build_id="$(python .github/scripts/valheim_build_id.py)"
+          echo "Valheim public branch build id: ${build_id}"
+          echo "build_id=${build_id}" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # A push or an explicit force always rebuilds: those mean the Dockerfile or
+      # entrypoint changed, which the Valheim build id knows nothing about.
+      - id: decide
+        run: |
+          if [ "${{ github.event_name }}" != "schedule" ] || [ "${{ inputs.force }}" = "true" ]; then
+            echo "should_build=true" >> "$GITHUB_OUTPUT"
+          elif docker manifest inspect "${IMAGE}:build-${{ steps.steam.outputs.build_id }}" >/dev/null 2>&1; then
+            echo "build-${{ steps.steam.outputs.build_id }} already published, nothing to do"
+            echo "should_build=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "should_build=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  build:
+    name: build and push arm64 image
+    needs: resolve
+    if: needs.resolve.outputs.should_build == 'true'
+    runs-on: ubuntu-24.04-arm
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      # The game payload is ~1.7 GB and is held across two stages, so the build
+      # wants around 6 GB. Surface the headroom rather than failing opaquely.
+      - name: show disk headroom
+        run: df -h /
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          platforms: linux/arm64
+          tags: |
+            ${{ env.IMAGE }}:latest
+            ${{ env.IMAGE }}:build-${{ needs.resolve.outputs.build_id }}
+          # mode=max keeps the box64 compile cached, which is the slow stage. The
+          # game payload layer re-downloads on every Valheim update regardless.
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: false
+
+      - name: summary
+        run: |
+          {
+            echo "### Published"
+            echo
+            echo '```'
+            echo "${IMAGE}:latest"
+            echo "${IMAGE}:build-${{ needs.resolve.outputs.build_id }}"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
