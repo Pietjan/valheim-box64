@@ -98,11 +98,18 @@ jobs:
           context: .
           push: true
           platforms: linux/arm64
+          # Without this the download layer has no input that changes per
+          # release, so the GHA cache hands back the previous game payload and the
+          # new tag points at the old image. Four releases shipped that way.
+          build-args: |
+            VALHEIM_BUILD_ID=${{ needs.resolve.outputs.build_id }}
           tags: |
             ${{ env.IMAGE }}:latest
             ${{ env.IMAGE }}:build-${{ needs.resolve.outputs.build_id }}
-          # mode=max keeps the box64 compile cached, which is the slow stage. The
-          # game payload layer re-downloads on every Valheim update regardless.
+          # mode=max keeps the box64 compile cached, which is the slow stage.
+          # The game payload layer only re-downloads because VALHEIM_BUILD_ID
+          # above changes with it; assuming it would do so on its own is exactly
+          # what went wrong.
           cache-from: type=gha
           cache-to: type=gha,mode=max
           provenance: false

@@ -11,6 +11,15 @@ ARG BOX64_REF=v0.4.5-1
 ARG VALHEIM_APP_ID=896660
 ARG DEPOTDOWNLOADER_VERSION=3.4.0
 
+# The Steam build id of the payload to fetch. Not used to select anything — the
+# download always takes the public branch — but the download layer has no other
+# input that changes when Iron Gate ships a release, so without it a cache hit
+# silently reuses the previous game and the image gets tagged with a build id it
+# does not contain. That happened for four consecutive releases.
+#
+# Empty by default so a local build still works; CI passes the id it resolved.
+ARG VALHEIM_BUILD_ID=
+
 # ---------------------------------------------------------------------------
 # Stage 1: game payload
 #
@@ -24,6 +33,7 @@ ARG DEPOTDOWNLOADER_VERSION=3.4.0
 FROM ${DEBIAN_IMAGE} AS game
 
 ARG VALHEIM_APP_ID
+ARG VALHEIM_BUILD_ID
 ARG DEPOTDOWNLOADER_VERSION
 ARG TARGETARCH
 
@@ -44,7 +54,12 @@ RUN case "${TARGETARCH}" in \
 
 # No -username: DepotDownloader logs in anonymously, which is all app 896660 needs.
 # DepotDownloader does not preserve the executable bit, so restore it here.
-RUN /opt/depotdownloader/DepotDownloader \
+#
+# Echoing the build id is what breaks the cache: it puts the id into this layer's
+# command, so a new release produces a new layer instead of restoring the last
+# one. The value is otherwise unused.
+RUN echo "valheim build ${VALHEIM_BUILD_ID}" \
+    && /opt/depotdownloader/DepotDownloader \
         -app ${VALHEIM_APP_ID} \
         -os linux \
         -osarch 64 \
